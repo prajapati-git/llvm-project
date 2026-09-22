@@ -2900,6 +2900,32 @@ def : Pat<(add GPR32:$Rn, neg_cheaper_imm32:$imm),
 def : Pat<(add GPR64:$Rn, neg_cheaper_imm64:$imm),
           (SUBSXrr GPR64:$Rn, (MOVi64imm neg_cheaper_imm64:$imm))>;
 
+// As above, but also when -c merely ties with c on instruction count (only
+// when c is negative, so this converges on the positive magnitude rather
+// than swapping signs). Even a tie is worth taking here: it lets MachineCSE
+// recognize the resulting positive-magnitude materialization as identical
+// to another instruction elsewhere in the function that already needs the
+// same positive constant (e.g. `use(a + k, b - k)`), sharing one register
+// instead of each materializing its own, unrelated constant. Guarded on the
+// whole (add ...) shape, not just the immediate, so it can decline when the
+// other operand is a multiply that a more specific fusion pattern (madd,
+// folding c directly into the accumulator) would otherwise handle strictly
+// better -- a bare immediate-only PatLeaf can't see that sibling operand.
+def add_neg_tied_imm32 : PatFrag<(ops node:$Rn, node:$imm),
+                                  (add node:$Rn, node:$imm), [{
+  return N->getOperand(0).getOpcode() != ISD::MUL &&
+         isWorthNegatingImmForAddSub(N->getOperand(1));
+}]>;
+def add_neg_tied_imm64 : PatFrag<(ops node:$Rn, node:$imm),
+                                  (add node:$Rn, node:$imm), [{
+  return N->getOperand(0).getOpcode() != ISD::MUL &&
+         isWorthNegatingImmForAddSub(N->getOperand(1));
+}]>;
+def : Pat<(add_neg_tied_imm32 GPR32:$Rn, imm:$imm),
+          (SUBSWrr GPR32:$Rn, (MOVi32imm (negate_imm imm:$imm)))>;
+def : Pat<(add_neg_tied_imm64 GPR64:$Rn, imm:$imm),
+          (SUBSXrr GPR64:$Rn, (MOVi64imm (negate_imm imm:$imm)))>;
+
 def trunc_isWorthFoldingALU : PatFrag<(ops node:$src), (trunc $src)> {
   let PredicateCode = [{ return isWorthFoldingALU(SDValue(N, 0)); }];
   let GISelPredicateCode = [{ return isWorthFoldingIntoExtendedReg(MI, MRI, false); }];
